@@ -278,3 +278,106 @@ class TDSConvEncoder(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return self.tds_conv_blocks(inputs)  # (T, N, num_features)
+
+
+class GRUEncoder(nn.Module):
+    def __init__(
+        self,
+        num_features: int, 
+        hidden_size: int = 384, 
+        num_layers: int = 1,
+        dropout: float = 0.1, 
+        bidirectional=True
+    ) -> None:
+        super().__init__()
+
+        self.gru = nn.GRU(
+            input_size=num_features,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=(dropout if num_layers > 1 else 0.0),
+            bidirectional=bidirectional,
+        )
+
+        out_dim = hidden_size * (2 if bidirectional else 1)
+        self.proj = nn.Linear(out_dim, num_features)
+        
+        self.layer_norm = nn.LayerNorm(num_features)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        x = inputs                 # (T, N, num_features)
+        x, _ = self.gru(x)         # (T, N, out_dim)
+        x = self.proj(x)           # (T, N, num_features)
+        x = x + inputs             # residual connection
+        return self.layer_norm(x)
+
+
+class DeepGRUEncoder(nn.Module):
+    def __init__(
+        self,
+        num_features: int, 
+        hidden_size: int = 384, 
+        num_layers: int = 1,
+        dropout: float = 0.1, 
+        bidirectional=True
+    ) -> None:
+        super().__init__()
+
+        self.num_layers = num_layers
+        self.directions = (2 if bidirectional else 1)
+        out_dim = self.directions * hidden_size
+
+        self.layers = nn.ModuleList(
+            [
+                nn.GRU(
+                    input_size=num_features,
+                    hidden_size=hidden_size,
+                    bidirectional=bidirectional
+                )
+            ]
+        )
+        self.layer_norms = nn.ModuleList(
+            [
+                nn.LayerNorm(out_dim)
+            ]
+        )
+
+        for _ in range(num_layers - 1):
+            self.layers.append(
+                nn.GRU(
+                    input_size=out_dim,
+                    hidden_size=hidden_size,
+                    bidirectional=bidirectional,
+                )
+            )
+            self.layer_norms.append(
+                nn.LayerNorm(out_dim)
+            )
+
+        self.dropout = nn.Dropout(dropout)
+
+        self.proj = nn.Linear(out_dim, num_features)
+        
+        self.output_layer_norm = nn.LayerNorm(num_features)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        x = inputs
+
+        for i, (layer, layer_norm) in enumerate(zip(self.layers, self.layer_norms)):
+            if i == 0:
+                x, _ = layer(x)
+                x = self.dropout(x)
+                x = layer_norm(x)
+            else:
+                residual = x
+                x, _ = layer(x)
+                
+                if i < self.num_layers - 1:
+                    x = self.dropout(x)
+                    
+                x = x + residual
+                x = layer_norm(x)
+
+        x = self.proj(x)
+        x = x + inputs
+        return self.output_layer_norm(x)
