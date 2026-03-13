@@ -3,9 +3,9 @@ module:
   _target_: emg2qwerty.lightning.GRUCTCModule
   in_features: 528  # freq * channels = (n_fft // 2 + 1) * 16
   mlp_features: [384]
-  hidden_size: 128
-  num_layers: 1
-  dropout: 0.1
+  hidden_size: 512
+  num_layers: 3
+  dropout: 0.3
 
 datamodule:
   _target_: emg2qwerty.lightning.WindowedEMGDataModule
